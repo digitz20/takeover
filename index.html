@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Remote Desktop Client</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        #controls {
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+        }
+        #screen-container {
+            width: 100%;
+            max-width: 1280px; /* Max width for the screen display */
+            margin: 0 auto;
+            border: 1px solid #ccc;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            background-color: #000;
+            overflow: hidden; /* Ensure image doesn't overflow */
+        }
+        #remoteScreen {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        button {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            background-color: #007bff;
+            color: white;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        select {
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            font-size: 16px;
+            min-width: 200px;
+        }
+        #status {
+            margin-left: 10px;
+            font-weight: bold;
+        }
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <h1>Remote Desktop Client</h1>
+
+    <div id="controls">
+        <button id="discoverServersBtn">Discover Servers</button>
+        <div id="serverSelection" class="hidden">
+            <select id="serverSelect"></select>
+            <button id="connectBtn">Connect</button>
+        </div>
+        <span id="status"></span>
+    </div>
+
+    <div id="screen-container">
+        <img id="remoteScreen" src="" alt="Remote Screen" draggable="false">
+    </div>
+
+    <script>
+        const remoteScreen = document.getElementById('remoteScreen');
+        const discoverServersBtn = document.getElementById('discoverServersBtn');
+        const serverSelectionDiv = document.getElementById('serverSelection');
+        const serverSelect = document.getElementById('serverSelect');
+        const connectBtn = document.getElementById('connectBtn');
+        const statusSpan = document.getElementById('status');
+
+        let ws;
+        let discoveredServers = [];
+        let currentServerIp = '';
+        let screenWidth = 0;
+        let screenHeight = 0;
+        let pressedKeys = new Set(); // To track currently pressed keys and prevent repeats
+
+        // --- Configuration ---
+        const BACKEND_API_URL = 'http://127.0.0.1:5000'; // Your Flask API URL (for local testing)
+                                                        // When deployed to Vercel, this will be your Vercel API URL
+        const WS_PORT = 8080; // WebSocket port on the remote server
+
+        // --- UI Update Functions ---
+        function updateStatus(message, color = 'black') {
+            statusSpan.textContent = message;
+            statusSpan.style.color = color;
+        }
+
+        function populateServerSelect() {
+            serverSelect.innerHTML = ''; // Clear previous options
+            if (discoveredServers.length === 0) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No servers found';
+                serverSelect.appendChild(option);
+                connectBtn.disabled = true;
+            } else {
+                discoveredServers.forEach(server => {
+                    const option = document.createElement('option');
+                    option.value = server.ip;
+                    option.textContent = `Remote PC at ${server.ip}`;
+                    serverSelect.appendChild(option);
+                });
+                connectBtn.disabled = false;
+            }
+        }
+
+        function showServerSelection() {
+            serverSelectionDiv.classList.remove('hidden');
+        }
+
+        function hideServerSelection() {
+            serverSelectionDiv.classList.add('hidden');
+        }
+
+        // --- Server Discovery and Connection ---
+
+        async function fetchServersFromAPI() {
+            updateStatus('Fetching servers from API...', 'blue');
+            discoveredServers = [];
+            try {
+                const response = await fetch(`${BACKEND_API_URL}/api/servers`);
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                discoveredServers = data;
+
+                if (discoveredServers.length > 0) {
+                    updateStatus(`Found ${discoveredServers.length} server(s).`, 'green');
+                    populateServerSelect();
+                    showServerSelection();
+                    // Auto-connect if only one server is found
+                    if (discoveredServers.length === 1) {
+                        serverSelect.value = discoveredServers[0].ip;
+                        connectToServer();
+                    }
+                } else {
+                    updateStatus('No active servers found in MongoDB. Ensure server.exe is running and reporting.', 'red');
+                    populateServerSelect(); // To show "No servers found"
+                    hideServerSelection();
+                }
+            } catch (error) {
+                updateStatus(`Error fetching servers: ${error.message}. Is the API running?`, 'red');
+                populateServerSelect(); // To show "No servers found"
+                hideServerSelection();
+            }
+        }
+
+        function connectToServer() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+            }
+
+            currentServerIp = serverSelect.value;
+            if (!currentServerIp) {
+                updateStatus('Please select a server.', 'red');
+                return;
+            }
+
+            const wsUrl = `ws://${currentServerIp}:${WS_PORT}`;
+            updateStatus(`Connecting to ${wsUrl}...`, 'blue');
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                updateStatus(`Connected to ${wsUrl}`, 'green');
+                remoteScreen.style.display = 'block';
+            };
+
+            ws.onmessage = (event) => {
+                if (event.data instanceof Blob) {
+                    const imageUrl = URL.createObjectURL(event.data);
+                    remoteScreen.src = imageUrl;
+                    remoteScreen.onload = () => {
+                        URL.revokeObjectURL(imageUrl); // Clean up the object URL
+                        if (screenWidth === 0 || screenHeight === 0) {
+                            // Get actual screen resolution from the first image
+                            screenWidth = remoteScreen.naturalWidth;
+                            screenHeight = remoteScreen.naturalHeight;
+                            console.log(`Remote screen resolution: ${screenWidth}x${screenHeight}`);
+                        }
+                    };
+                }
+            };
+
+            ws.onclose = () => {
+                updateStatus('Disconnected from server.', 'red');
+                remoteScreen.style.display = 'none';
+                screenWidth = 0;
+                screenHeight = 0;
+            };
+
+            ws.onerror = (error) => {
+                updateStatus(`WebSocket Error: ${error.message || 'Unknown error'}`, 'red');
+                console.error('WebSocket Error:', error);
+            };
+        }
+
+        // --- Input Handling ---
+        function sendInput(type, data) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type, ...data }));
+            }
+        }
+
+        remoteScreen.addEventListener('mousemove', (e) => {
+            if (screenWidth === 0 || screenHeight === 0) return; // Wait for screen resolution
+            const rect = remoteScreen.getBoundingClientRect();
+            const scaleX = screenWidth / rect.width;
+            const scaleY = screenHeight / rect.height;
+            const x = Math.round((e.clientX - rect.left) * scaleX);
+            const y = Math.round((e.clientY - rect.top) * scaleY);
+            sendInput('mousemove', { x, y });
+        });
+
+        remoteScreen.addEventListener('mousedown', (e) => {
+            sendInput('mousedown', { button: e.button });
+        });
+
+        remoteScreen.addEventListener('mouseup', (e) => {
+            sendInput('mouseup', { button: e.button });
+        });
+
+        // Prevent default right-click context menu
+        remoteScreen.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+        });
+
+        document.addEventListener('keydown', (e) => {
+            // Prevent repeating keydown events for held keys
+            if (pressedKeys.has(e.key)) {
+                return;
+            }
+            pressedKeys.add(e.key);
+
+            // Prevent browser shortcuts (e.g., F5, Ctrl+R, Space for scroll)
+            if (e.key === 'F5' || (e.ctrlKey && e.key === 'r') || e.key === ' ') {
+                e.preventDefault();
+            }
+            
+            sendInput('keydown', { key: e.key });
+        });
+
+        document.addEventListener('keyup', (e) => {
+            pressedKeys.delete(e.key);
+            sendInput('keyup', { key: e.key });
+        });
+
+        // --- Event Listeners ---
+        discoverServersBtn.addEventListener('click', fetchServersFromAPI);
+        connectBtn.addEventListener('click', connectToServer);
+
+        // Initial load: try to fetch servers
+        fetchServersFromAPI();
+    </script>
+</body>
+</html>
