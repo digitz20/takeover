@@ -90,16 +90,18 @@ async def receive_input_data(websocket):
         async for message in websocket:
             try:
                 data = json.loads(message)
-                # print(f"Received input: {data}") # Keep for debugging if needed
+                print(f"Received input: {data}") # Keep for debugging if needed
 
                 if data['type'] == 'mousemove':
                     mouse.position = (data['x'], data['y'])
                 elif data['type'] == 'mousedown':
                     button = Button.left if data['button'] == 0 else Button.right # 0 for left, 2 for right
                     mouse.press(button)
+                    print(f"Simulating mouse press: {button}") # Add this
                 elif data['type'] == 'mouseup':
                     button = Button.left if data['button'] == 0 else Button.right
                     mouse.release(button)
+                    print(f"Simulating mouse release: {button}") # Add this
                 elif data['type'] == 'click':
                     button = Button.left if data['button'] == 0 else Button.right
                     mouse.click(button)
@@ -108,21 +110,27 @@ async def receive_input_data(websocket):
                         # Handle special keys (e.g., 'space', 'enter', 'shift')
                         key_to_press = getattr(Key, data['key'].lower(), data['key'])
                         keyboard.press(key_to_press)
+                        print(f"Simulating keydown: {key_to_press}") # Add this
                     except AttributeError:
                         # If it's not a special key, it's likely a character
                         keyboard.press(data['key'])
+                        print(f"Simulating keydown (char): {data['key']}") # Add this
                 elif data['type'] == 'keyup':
                     try:
                         key_to_release = getattr(Key, data['key'].lower(), data['key'])
                         keyboard.release(key_to_release)
+                        print(f"Simulating keyup: {key_to_release}") # Add this
                     except AttributeError:
                         keyboard.release(data['key'])
-
+                        print(f"Simulating keyup (char): {data['key']}") # Add this
             except json.JSONDecodeError:
                 print(f"Received non-JSON message: {message}")
             except Exception as e:
                 print(f"Error processing input message: {e}")
-
+                # Add this specific check for pynput related errors
+                if "pynput" in str(e).lower() or "permission" in str(e).lower():
+                    print("HINT: Input simulation might be failing due to permissions or pynput issues.")
+                    print("Try running server.py as Administrator.")
     except websockets.exceptions.ConnectionClosedOK:
         print("Client disconnected gracefully during input receive.")
     except Exception as e:
