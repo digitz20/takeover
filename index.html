@@ -48,6 +48,10 @@
         button:hover {
             background-color: #0056b3;
         }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
         select {
             padding: 10px;
             border-radius: 5px;
@@ -72,6 +76,7 @@
         <div id="serverSelection" class="hidden">
             <select id="serverSelect"></select>
             <button id="connectBtn">Connect</button>
+            <button id="disconnectBtn" disabled>Disconnect</button> <!-- Disconnect button added -->
         </div>
         <span id="status"></span>
     </div>
@@ -86,6 +91,7 @@
         const serverSelectionDiv = document.getElementById('serverSelection');
         const serverSelect = document.getElementById('serverSelect');
         const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn'); // Get the new disconnect button
         const statusSpan = document.getElementById('status');
 
         let ws;
@@ -97,7 +103,6 @@
 
         // --- Configuration ---
         const BACKEND_API_URL = 'https://marine-beverlie-webscraper-b0def06c.koyeb.app'; // Your Koyeb API URL
-                                                        // When deployed to Vercel, this will be your Vercel API URL
         const WS_PORT = 8080; // WebSocket port on the remote server
 
         // --- UI Update Functions ---
@@ -133,11 +138,19 @@
             serverSelectionDiv.classList.add('hidden');
         }
 
+        function setConnectionState(isConnected) {
+            connectBtn.disabled = isConnected;
+            disconnectBtn.disabled = !isConnected;
+            serverSelect.disabled = isConnected;
+            discoverServersBtn.disabled = isConnected;
+        }
+
         // --- Server Discovery and Connection ---
 
         async function fetchServersFromAPI() {
             updateStatus('Fetching servers from API...', 'blue');
             discoveredServers = [];
+            setConnectionState(false); // Ensure buttons are in correct state
             try {
                 const response = await fetch(`${BACKEND_API_URL}/api/servers`);
                 if (!response.ok) {
@@ -180,6 +193,7 @@
 
             const wsUrl = `ws://${currentServerIp}:${WS_PORT}`;
             updateStatus(`Connecting to ${wsUrl}...`, 'blue');
+            setConnectionState(true); // Disable connect, enable disconnect
 
             ws = new WebSocket(wsUrl);
 
@@ -209,12 +223,24 @@
                 remoteScreen.style.display = 'none';
                 screenWidth = 0;
                 screenHeight = 0;
+                setConnectionState(false); // Enable connect, disable disconnect
             };
 
             ws.onerror = (error) => {
                 updateStatus(`WebSocket Error: ${error.message || 'Unknown error'}`, 'red');
                 console.error('WebSocket Error:', error);
+                setConnectionState(false); // Enable connect, disable disconnect
             };
+        }
+
+        function disconnectFromServer() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close();
+                updateStatus('Disconnecting...', 'orange');
+            } else {
+                updateStatus('No active connection to disconnect.', 'red');
+            }
+            setConnectionState(false); // Ensure buttons are in correct state
         }
 
         // --- Input Handling ---
@@ -270,6 +296,7 @@
         // --- Event Listeners ---
         discoverServersBtn.addEventListener('click', fetchServersFromAPI);
         connectBtn.addEventListener('click', connectToServer);
+        disconnectBtn.addEventListener('click', disconnectFromServer); // Event listener for disconnect button
 
         // Initial load: try to fetch servers
         fetchServersFromAPI();
